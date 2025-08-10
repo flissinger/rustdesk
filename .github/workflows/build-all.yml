@@ -1,0 +1,192 @@
+name: Build RustDesk (All Desktop + Android)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+env:
+  # beschikbaar voor alle jobs (worden via Secrets gevuld)
+  RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+  RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
+
+jobs:
+  linux:
+    name: Linux (x64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter --version && flutter config --enable-linux-desktop
+
+      - name: Install build deps (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libayatana-appindicator3-dev \
+            libwebkit2gtk-4.0-dev librsvg2-dev \
+            cmake ninja-build pkg-config curl unzip \
+            protobuf-compiler python3
+
+      - name: flutter_rust_bridge codegen
+        run: |
+          cargo install flutter_rust_bridge_codegen --locked
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart
+
+      - name: Flutter deps
+        run: cd flutter && flutter pub get
+
+      - name: Build (Linux)
+        run: python3 ./build.py --flutter --release
+
+      - name: Upload artifact (Linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-linux-custom
+          path: |
+            ./rustdesk*
+            ./flutter/build/linux/**
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - shell: bash
+        run: |
+          flutter --version
+          flutter config --enable-windows-desktop
+
+      - name: Install build deps (Windows)
+        run: choco install -y cmake ninja protoc python
+
+      - name: flutter_rust_bridge codegen
+        shell: bash
+        run: |
+          cargo install flutter_rust_bridge_codegen --locked
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart
+
+      - name: Flutter deps
+        shell: bash
+        run: cd flutter && flutter pub get
+
+      - name: Build (Windows)
+        run: python ./build.py --flutter --release
+
+      - name: Upload artifact (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-windows-custom
+          path: |
+            .\rustdesk*.exe
+            .\flutter\build\windows\**\*
+
+  macos:
+    name: macOS (Intel runner)
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: |
+          flutter --version
+          flutter config --enable-macos-desktop
+
+      - name: Install build deps (macOS)
+        run: |
+          brew update
+          brew install cmake ninja protobuf
+          sudo gem install cocoapods --no-document
+
+      - name: flutter_rust_bridge codegen
+        run: |
+          cargo install flutter_rust_bridge_codegen --locked
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart
+
+      - name: Flutter deps
+        run: cd flutter && flutter pub get
+
+      - name: Build (macOS)
+        run: python3 ./build.py --flutter --release
+
+      - name: Upload artifact (macOS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-macos-custom
+          path: |
+            ./flutter/build/macos/**/*
+            ./rustdesk*.dmg
+            ./rustdesk*.zip
+
+  android:
+    name: Android (APK)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install Android build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler python3
+
+      - name: flutter_rust_bridge codegen
+        run: |
+          cargo install flutter_rust_bridge_codegen --locked
+          ~/.cargo/bin/flutter_rust_bridge_codegen \
+            --rust-input ./src/flutter_ffi.rs \
+            --dart-output ./flutter/lib/generated_bridge.dart
+
+      - name: Flutter deps
+        run: cd flutter && flutter pub get
+
+      - name: Accept Android licenses
+        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses
+
+      - name: Build (Android APK)
+        run: |
+          cd flutter
+          flutter build apk --release
+
+      - name: Upload artifact (Android)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdesk-android-apk-custom
+          path: flutter/build/app/outputs/flutter-apk/app-release.apk
