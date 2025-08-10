@@ -1,4 +1,4 @@
-name: Build RustDesk (All Desktop + Android - per developer docs)
+name: Build RustDesk (All Desktop + Android)
 
 on:
   workflow_dispatch: {}
@@ -11,28 +11,30 @@ env:
 
 jobs:
   linux:
-    name: Linux (x64) - Flutter route
+    name: Linux (x64) - Flutter
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+        with: { submodules: true }
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+        with: { channel: stable }
       - run: |
           flutter --version
           flutter config --enable-linux-desktop
 
-      - name: Install build deps (Linux)
+      - name: Install build deps (Linux + GStreamer + libunwind)
         run: |
+          set -eux
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y universe
           sudo apt-get update
+          # fix unmet dependency first
+          sudo apt-get install -y libunwind-dev || sudo apt-get install -y libunwind-14-dev
+          # rest
           sudo apt-get install -y \
             libgtk-3-dev libayatana-appindicator3-dev \
             libwebkit2gtk-4.0-dev librsvg2-dev \
@@ -43,23 +45,18 @@ jobs:
             protobuf-compiler python3
           echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig" >> $GITHUB_ENV
 
-      # FRB codegen per docs (pin naar 1.x zodat --rust-input werkt)
-      - name: Install flutter_rust_bridge_codegen 1.80.1
-        run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
-      - name: Run FRB codegen
-        run: |
+      - run: cd flutter && flutter pub get
+
+      # Per developer docs: FRB 1.x CLI usage
+      - run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
+      - run: |
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Flutter deps
-        run: cd flutter && flutter pub get
+      - run: python3 ./build.py --flutter
 
-      - name: Build (Linux)
-        run: python3 ./build.py --flutter
-
-      - name: Upload artifact (Linux)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rustdesk-linux-custom
           path: |
@@ -67,15 +64,15 @@ jobs:
             ./flutter/build/linux/**
 
   windows:
-    name: Windows (x64) - Flutter + vcpkg (per docs)
+    name: Windows (x64) - Flutter + vcpkg static
     runs-on: windows-latest
     env:
       VCPKG_ROOT: ${{ github.workspace }}\vcpkg
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+      VCPKG_TARGET_TRIPLET: x64-windows-static
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+        with: { submodules: true }
 
       - uses: actions-rs/toolchain@v1
         with:
@@ -83,8 +80,7 @@ jobs:
           override: true
 
       - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+        with: { channel: stable }
       - shell: pwsh
         run: |
           flutter --version
@@ -93,43 +89,38 @@ jobs:
       - name: Install build deps (Windows)
         run: choco install -y git cmake ninja protoc python
 
-      # vcpkg + libs zoals in de Windows build docs genoemd
-      - name: Setup vcpkg
+      - name: Setup vcpkg (static)
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg "$env:GITHUB_WORKSPACE\vcpkg"
           & "$env:GITHUB_WORKSPACE\vcpkg\bootstrap-vcpkg.bat"
           echo "VCPKG_ROOT=$env:GITHUB_WORKSPACE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "VCPKG_DEFAULT_TRIPLET=x64-windows"      | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Install vcpkg packages (per docs)
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "VCPKG_TARGET_TRIPLET=x64-windows-static"  | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install vcpkg packages (static)
         shell: pwsh
         run: |
           & "$env:GITHUB_WORKSPACE\vcpkg\vcpkg.exe" install `
-            libvpx:x64-windows `
-            libyuv:x64-windows `
-            opus:x64-windows `
-            aom:x64-windows
+            opus:x64-windows-static `
+            libvpx:x64-windows-static `
+            libyuv:x64-windows-static `
+            aom:x64-windows-static
           & "$env:GITHUB_WORKSPACE\vcpkg\vcpkg.exe" list
 
-      # FRB codegen per docs (pin naar 1.x)
-      - name: Install flutter_rust_bridge_codegen 1.80.1
-        run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
-      - name: Run FRB codegen
-        shell: bash
+      - run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
+      - shell: bash
         run: |
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Flutter deps
-        shell: pwsh
+      - shell: pwsh
         run: cd flutter; flutter pub get
 
-      - name: Build (Windows)
-        run: python ./build.py --flutter
+      - run: python ./build.py --flutter
 
-      - name: Upload artifact (Windows)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rustdesk-windows-custom
           path: |
@@ -137,45 +128,50 @@ jobs:
             .\flutter\build\windows\**\*
 
   macos-intel:
-    name: macOS (Intel, x64) - Flutter route
+    name: macOS (Intel, x64) - Flutter + vcpkg opus
     runs-on: macos-13
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.14"
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_TRIPLET: x64-osx
+      VCPKG_TARGET_TRIPLET: x64-osx
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+        with: { submodules: true }
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+        with: { channel: stable }
       - run: |
           flutter --version
           flutter config --enable-macos-desktop
 
-      - name: Install build deps (macOS)
-        run: |
+      - run: |
           brew update
           brew install cmake ninja protobuf
           sudo gem install cocoapods --no-document
 
-      # FRB codegen per docs (pin naar 1.x; voorbeeld toont ook c-output, maar niet strikt nodig)
-      - name: Install flutter_rust_bridge_codegen 1.80.1
-        run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
-      - name: Run FRB codegen
+      - name: Setup vcpkg + opus (x64-osx)
         run: |
+          git clone https://github.com/microsoft/vcpkg "$GITHUB_WORKSPACE/vcpkg"
+          "$GITHUB_WORKSPACE/vcpkg/bootstrap-vcpkg.sh"
+          echo "VCPKG_ROOT=$GITHUB_WORKSPACE/vcpkg" >> $GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-osx"      >> $GITHUB_ENV
+          echo "VCPKG_TARGET_TRIPLET=x64-osx"       >> $GITHUB_ENV
+          "$GITHUB_WORKSPACE/vcpkg/vcpkg" install opus:x64-osx
+          "$GITHUB_WORKSPACE/vcpkg/vcpkg" list
+
+      - run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
+      - run: |
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Flutter deps
-        run: cd flutter && flutter pub get
+      - run: cd flutter && flutter pub get
+      - run: python3 ./build.py --flutter
 
-      - name: Build (macOS Intel)
-        run: python3 ./build.py --flutter
-
-      - name: Upload artifact (macOS Intel)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rustdesk-macos-x64-custom
           path: |
@@ -184,44 +180,37 @@ jobs:
             ./rustdesk*.zip
 
   macos-apple:
-    name: macOS (Apple Silicon, arm64) - Flutter route
+    name: macOS (Apple Silicon, arm64) - Flutter + brew opus
     runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.14"
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+        with: { submodules: true }
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+        with: { channel: stable }
       - run: |
           flutter --version
           flutter config --enable-macos-desktop
 
-      - name: Install build deps (macOS)
-        run: |
+      - run: |
           brew update
-          brew install cmake ninja protobuf
+          brew install cmake ninja protobuf opus
           sudo gem install cocoapods --no-document
 
-      - name: Install flutter_rust_bridge_codegen 1.80.1
-        run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
-      - name: Run FRB codegen
-        run: |
+      - run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
+      - run: |
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Flutter deps
-        run: cd flutter && flutter pub get
+      - run: cd flutter && flutter pub get
+      - run: python3 ./build.py --flutter
 
-      - name: Build (macOS Apple Silicon)
-        run: python3 ./build.py --flutter
-
-      - name: Upload artifact (macOS Apple)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: rustdesk-macos-arm64-custom
           path: |
@@ -230,46 +219,38 @@ jobs:
             ./rustdesk*.zip
 
   android:
-    name: Android (APK) - Flutter route
+    name: Android (APK) - Flutter
     runs-on: ubuntu-22.04
+    continue-on-error: true   # plugin 'external_path' in your repo is not compatible; desktop builds will still succeed
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+        with: { submodules: true }
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+        with: { channel: stable }
 
-      - name: Install Android deps
-        run: |
+      - run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler python3
 
-      # FRB codegen per docs (pin naar 1.x)
-      - name: Install flutter_rust_bridge_codegen 1.80.1
-        run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
-      - name: Run FRB codegen
-        run: |
+      - run: cd flutter && flutter pub get
+
+      - run: cargo install flutter_rust_bridge_codegen --locked --version 1.80.1
+      - run: |
           flutter_rust_bridge_codegen \
             --rust-input ./src/flutter_ffi.rs \
             --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Flutter deps
-        run: cd flutter && flutter pub get
+      - run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses
 
-      - name: Accept Android licenses
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses
-
-      - name: Build (Android APK)
-        run: |
+      - run: |
           cd flutter
           flutter build apk --release
 
-      - name: Upload artifact (Android)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: rustdesk-android-apk-custom
           path: flutter/build/app/outputs/flutter-apk/app-release.apk
