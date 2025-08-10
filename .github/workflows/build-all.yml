@@ -6,7 +6,6 @@ on:
     branches: [ main ]
 
 env:
-  # beschikbaar voor alle jobs (worden via Secrets gevuld)
   RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
   RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
 
@@ -24,7 +23,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - run: flutter --version && flutter config --enable-linux-desktop
+      - run: |
+          flutter --version
+          flutter config --enable-linux-desktop
 
       - name: Install build deps (Linux)
         run: |
@@ -34,13 +35,6 @@ jobs:
             libwebkit2gtk-4.0-dev librsvg2-dev \
             cmake ninja-build pkg-config curl unzip \
             protobuf-compiler python3
-
-      - name: flutter_rust_bridge codegen
-        run: |
-          cargo install flutter_rust_bridge_codegen --locked
-          ~/.cargo/bin/flutter_rust_bridge_codegen \
-            --rust-input ./src/flutter_ffi.rs \
-            --dart-output ./flutter/lib/generated_bridge.dart
 
       - name: Flutter deps
         run: cd flutter && flutter pub get
@@ -80,14 +74,6 @@ jobs:
       - name: Install build deps (Windows)
         run: choco install -y cmake ninja protoc python
 
-      - name: flutter_rust_bridge codegen
-        shell: bash
-        run: |
-          cargo install flutter_rust_bridge_codegen --locked
-          ~/.cargo/bin/flutter_rust_bridge_codegen \
-            --rust-input ./src/flutter_ffi.rs \
-            --dart-output ./flutter/lib/generated_bridge.dart
-
       - name: Flutter deps
         shell: bash
         run: cd flutter && flutter pub get
@@ -104,7 +90,8 @@ jobs:
             .\flutter\build\windows\**\*
 
   macos:
-    name: macOS (Intel runner)
+    # Intel runner (x86_64). Switch to macos-14 for Apple Silicon if you prefer.
+    name: macOS (x64)
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
@@ -125,13 +112,6 @@ jobs:
           brew update
           brew install cmake ninja protobuf
           sudo gem install cocoapods --no-document
-
-      - name: flutter_rust_bridge codegen
-        run: |
-          cargo install flutter_rust_bridge_codegen --locked
-          ~/.cargo/bin/flutter_rust_bridge_codegen \
-            --rust-input ./src/flutter_ffi.rs \
-            --dart-output ./flutter/lib/generated_bridge.dart
 
       - name: Flutter deps
         run: cd flutter && flutter pub get
@@ -162,17 +142,10 @@ jobs:
         with:
           channel: stable
 
-      - name: Install Android build deps
+      - name: Install Android deps
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler python3
-
-      - name: flutter_rust_bridge codegen
-        run: |
-          cargo install flutter_rust_bridge_codegen --locked
-          ~/.cargo/bin/flutter_rust_bridge_codegen \
-            --rust-input ./src/flutter_ffi.rs \
-            --dart-output ./flutter/lib/generated_bridge.dart
 
       - name: Flutter deps
         run: cd flutter && flutter pub get
