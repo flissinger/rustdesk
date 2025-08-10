@@ -1,12 +1,18 @@
 name: Run RustDesk Flutter Build (stable)
 
 on:
-  workflow_dispatch: {}   # handmatige Run-knop
+  workflow_dispatch: {}
+
+# ⬇️ geef de GITHUB_TOKEN schrijfrechten voor releases/tags
+permissions:
+  contents: write
+  actions: read
+  packages: read
 
 jobs:
   build-stable:
     uses: ./.github/workflows/flutter-build.yml
     with:
-      upload-artifact: true     # upload per-platform artifacts
-      upload-tag: stable        # prerelease tag-naam = "stable"
-    secrets: inherit            # geeft repo-secrets (SERVER/KEY) door
+      upload-artifact: true   # artifacts + Release
+      upload-tag: stable      # tagnaam van de prerelease
+    secrets: inherit          # geef je repo secrets door (server/key)
