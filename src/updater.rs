@@ -1,7 +1,7 @@
-use crate::{common::do_check_software_update, hbbs_http::create_http_client};
+use crate::{common::do_check_software_update, hbbs_http::create_http_client_with_url};
 use hbb_common::{bail, config, log, ResultType};
 use std::{
-    io::{self, Write},
+    io::Write,
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -28,6 +28,7 @@ pub fn update_controlling_session_count(count: usize) {
     CONTROLLING_SESSION_COUNT.store(count, Ordering::SeqCst);
 }
 
+#[allow(dead_code)]
 pub fn start_auto_update() {
     let _sender = TX_MSG.lock().unwrap();
 }
@@ -122,7 +123,7 @@ fn check_update(manually: bool) -> ResultType<()> {
     if !(manually || config::Config::get_bool_option(config::keys::OPTION_ALLOW_AUTO_UPDATE)) {
         return Ok(());
     }
-    if !do_check_software_update().is_ok() {
+    if do_check_software_update().is_err() {
         // ignore
         return Ok(());
     }
@@ -145,7 +146,7 @@ fn check_update(manually: bool) -> ResultType<()> {
             format!("{}/rustdesk-{}-x86-sciter.exe", download_url, version)
         };
         log::debug!("New version available: {}", &version);
-        let client = create_http_client();
+        let client = create_http_client_with_url(&download_url);
         let Some(file_path) = get_download_file_from_url(&download_url) else {
             bail!("Failed to get the file path from the URL: {}", download_url);
         };
@@ -184,7 +185,7 @@ fn check_update(manually: bool) -> ResultType<()> {
             let mut file = std::fs::File::create(&file_path)?;
             file.write_all(&file_data)?;
         }
-        // We have checked if the `conns`` is empty before, but we need to check again.
+        // We have checked if the `conns` is empty before, but we need to check again.
         // No need to care about the downloaded file here, because it's rare case that the `conns` are empty
         // before the download, but not empty after the download.
         if has_no_active_conns() {
@@ -197,7 +198,10 @@ fn check_update(manually: bool) -> ResultType<()> {
 
 #[cfg(target_os = "windows")]
 fn update_new_version(is_msi: bool, version: &str, file_path: &PathBuf) {
-    log::debug!("New version is downloaded, update begin, is msi: {is_msi}, version: {version}, file: {:?}", file_path.to_str());
+    log::debug!(
+        "New version is downloaded, update begin, is msi: {is_msi}, version: {version}, file: {:?}",
+        file_path.to_str()
+    );
     if let Some(p) = file_path.to_str() {
         if let Some(session_id) = crate::platform::get_current_process_session_id() {
             if is_msi {
@@ -231,7 +235,7 @@ fn update_new_version(is_msi: bool, version: &str, file_path: &PathBuf) {
         } else {
             log::error!(
                 "Failed to get the current process session id, Error {}",
-                io::Error::last_os_error()
+                std::io::Error::last_os_error()
             );
         }
     } else {
